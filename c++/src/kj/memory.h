@@ -165,6 +165,30 @@ public:
     return result;
   }
 
+  template <typename U>
+  Own<U> dynamicDowncastIfAvailable() {
+    // If RTTI is disabled, always returns nullptr.  Otherwise, attempts to downcast the pointer to
+    // T using dynamic_cast.  If dynamic_cast succeeds, then the original pointer is destroyed.
+    // Otherwise, a nullptr is returned and the original pointer remains valid.
+
+    // Force a compile error if U is not a subtype of T.
+    if (false) {
+      kj::implicitCast<T*>(kj::implicitCast<U*>(nullptr));
+    }
+
+#if KJ_NO_RTTI
+    return nullptr;
+#else
+    Own<U> result;
+    if (auto downcastedPtr = dynamic_cast<U*>(ptr)) {
+      result.ptr = downcastedPtr;
+      result.disposer = disposer;
+      ptr = nullptr;
+    }
+    return result;
+#endif
+  }
+
 #define NULLCHECK KJ_IREQUIRE(ptr != nullptr, "null Own<> dereference")
   inline T* operator->() { NULLCHECK; return ptr; }
   inline const T* operator->() const { NULLCHECK; return ptr; }
