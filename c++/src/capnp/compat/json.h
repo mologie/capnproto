@@ -135,7 +135,8 @@ public:
   // for calling from Handler implementations.
 
   kj::String encodeRaw(JsonValue::Reader value) const;
-  void decodeRaw(kj::ArrayPtr<const char> input, JsonValue::Builder output) const;
+  void decodeRaw(kj::ArrayPtr<const char> input, JsonValue::Builder output,
+      kj::ArrayPtr<byte> scratchSpace = nullptr) const;
   // Translate JsonValue <-> text.
 
   template <typename T>

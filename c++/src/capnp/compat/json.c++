@@ -21,12 +21,125 @@
 
 #include "json.h"
 #include <capnp/orphan.h>
+#include <kj/arena.h>
 #include <kj/debug.h>
 #include <kj/function.h>
 #include <kj/vector.h>
 #include <kj/one-of.h>
 #include <kj/encoding.h>
 #include <kj/map.h>
+
+namespace {
+
+template <typename T>
+class ArenaVector {
+public:
+  inline explicit ArenaVector(kj::Arena& arena, size_t capacity = 4):
+      builder(arena.allocateOwnArrayBuilder<T>(capacity)), arena(arena) {}
+
+  inline operator kj::ArrayPtr<T>() { return builder; }
+  inline operator kj::ArrayPtr<const T>() const { return builder; }
+  inline kj::ArrayPtr<T> asPtr() { return builder.asPtr(); }
+  inline kj::ArrayPtr<const T> asPtr() const { return builder.asPtr(); }
+
+  inline size_t size() const { return builder.size(); }
+  inline bool empty() const { return size() == 0; }
+  inline size_t capacity() const { return builder.capacity(); }
+  inline T& operator[](size_t index) { return builder[index]; }
+  inline const T& operator[](size_t index) const { return builder[index]; }
+
+  inline const T* begin() const { return builder.begin(); }
+  inline const T* end() const { return builder.end(); }
+  inline const T& front() const { return builder.front(); }
+  inline const T& back() const { return builder.back(); }
+  inline T* begin() { return builder.begin(); }
+  inline T* end() { return builder.end(); }
+  inline T& front() { return builder.front(); }
+  inline T& back() { return builder.back(); }
+
+  inline kj::Array<T> releaseAsArray() {
+    // TODO(perf):  Avoid a copy/move by allowing Array<T> to point to incomplete space?
+    if (!builder.isFull()) {
+      setCapacity(size());
+    }
+    return builder.finish();
+  }
+
+  template <typename U>
+  inline bool operator==(const U& other) const { return asPtr() == other; }
+  template <typename U>
+  inline bool operator!=(const U& other) const { return asPtr() != other; }
+
+  inline kj::ArrayPtr<T> slice(size_t start, size_t end) {
+    return asPtr().slice(start, end);
+  }
+  inline kj::ArrayPtr<const T> slice(size_t start, size_t end) const {
+    return asPtr().slice(start, end);
+  }
+
+  template <typename... Params>
+  inline T& add(Params&&... params) {
+    if (builder.isFull()) grow();
+    return builder.add(kj::fwd<Params>(params)...);
+  }
+
+  template <typename Iterator>
+  inline void addAll(Iterator begin, Iterator end) {
+    size_t needed = builder.size() + (end - begin);
+    if (needed > builder.capacity()) grow(needed);
+    builder.addAll(begin, end);
+  }
+
+  template <typename Container>
+  inline void addAll(Container&& container) {
+    addAll(container.begin(), container.end());
+  }
+
+  inline void removeLast() {
+    builder.removeLast();
+  }
+
+  inline void resize(size_t size) {
+    if (size > builder.capacity()) grow(size);
+    builder.resize(size);
+  }
+
+  inline void operator=(decltype(nullptr)) {
+    builder = nullptr;
+  }
+
+  inline void clear() {
+    builder.clear();
+  }
+
+  inline void truncate(size_t size) {
+    builder.truncate(size);
+  }
+
+  inline void reserve(size_t size) {
+    if (size > builder.capacity()) {
+      setCapacity(size);
+    }
+  }
+
+private:
+  kj::ArrayBuilder<T> builder;
+  kj::Arena& arena;
+
+  void grow(size_t minCapacity = 0) {
+    setCapacity(kj::max(minCapacity, capacity() == 0 ? 4 : capacity() * 2));
+  }
+  void setCapacity(size_t newSize) {
+    if (builder.size() > newSize) {
+      builder.truncate(newSize);
+    }
+    kj::ArrayBuilder<T> newBuilder = arena.allocateOwnArrayBuilder<T>(newSize);
+    newBuilder.addAll(kj::mv(builder));
+    builder = kj::mv(newBuilder);
+  }
+};
+
+} // private namspace
 
 namespace capnp {
 
@@ -46,8 +159,10 @@ struct JsonCodec::Impl {
     switch (value.which()) {
       case JsonValue::NULL_:
         return kj::strTree("null");
+
       case JsonValue::BOOLEAN:
         return kj::strTree(value.getBoolean());
+
       case JsonValue::NUMBER:
         return kj::strTree(value.getNumber());
 
@@ -616,7 +731,6 @@ public:
     });
   }
 
-
 private:
   kj::ArrayPtr<const char> wrapped;
 
@@ -624,8 +738,8 @@ private:
 
 class Parser {
 public:
-  Parser(size_t maxNestingDepth, kj::ArrayPtr<const char> input) :
-    maxNestingDepth(maxNestingDepth), input(input), nestingDepth(0) {}
+  Parser(size_t maxNestingDepth, kj::ArrayPtr<const char> input, kj::ArrayPtr<byte> scratchSpace) :
+    maxNestingDepth(maxNestingDepth), input(input), nestingDepth(0), arena(scratchSpace) {}
 
   void parseValue(JsonValue::Builder& output) {
     input.consumeWhitespace();
@@ -659,7 +773,7 @@ public:
     // TODO(perf): Using orphans leaves holes in the message. It's expected
     // that a JsonValue is used for interop, and won't be sent or written as a
     // Cap'n Proto message.  This also applies to parseObject below.
-    kj::Vector<Orphan<JsonValue>> values;
+    ArenaVector<Orphan<JsonValue>> values(arena);
     auto orphanage = Orphanage::getForMessageContaining(output);
     bool expectComma = false;
 
@@ -694,7 +808,7 @@ public:
   }
 
   void parseObject(JsonValue::Builder& output) {
-    kj::Vector<Orphan<JsonValue::Field>> fields;
+    ArenaVector<Orphan<JsonValue::Field>> fields(arena);
     auto orphanage = Orphanage::getForMessageContaining(output);
     bool expectComma = false;
 
@@ -743,7 +857,7 @@ private:
     input.consume('"');
     // TODO(perf): Avoid copy / alloc if no escapes encoutered.
     // TODO(perf): Get statistics on string size and preallocate?
-    kj::Vector<char> decoded;
+    ArenaVector<char> decoded(arena);
 
     do {
       auto stringValue = input.consumeWhile([](const char chr) {
@@ -776,7 +890,6 @@ private:
     input.consume('"');
     decoded.add('\0');
 
-    // TODO(perf): This copy can be eliminated, but I can't find the kj::wayToDoIt();
     return kj::String(decoded.releaseAsArray());
   }
 
@@ -800,7 +913,7 @@ private:
 
     KJ_REQUIRE(numArrayPtr.size() > 0, "Expected number in JSON input.");
 
-    kj::Vector<char> number;
+    ArenaVector<char> number(arena);
     number.addAll(numArrayPtr);
     number.add('\0');
 
@@ -808,7 +921,7 @@ private:
   }
 
   // TODO(someday): This "interface" is ugly, and won't work if/when surrogates are handled.
-  void unescapeAndAppend(kj::ArrayPtr<const char> hex, kj::Vector<char>& target) {
+  void unescapeAndAppend(kj::ArrayPtr<const char> hex, ArenaVector<char>& target) {
     KJ_REQUIRE(hex.size() == 4);
     int codePoint = 0;
 
@@ -839,17 +952,17 @@ private:
   const size_t maxNestingDepth;
   Input input;
   size_t nestingDepth;
-
+  kj::Arena arena;
 
 };  // class Parser
 
 }  // namespace
 
 
-void JsonCodec::decodeRaw(kj::ArrayPtr<const char> input, JsonValue::Builder output) const {
-  Parser parser(impl->maxNestingDepth, input);
+void JsonCodec::decodeRaw(kj::ArrayPtr<const char> input, JsonValue::Builder output,
+    kj::ArrayPtr<byte> scratchSpace) const {
+  Parser parser(impl->maxNestingDepth, input, scratchSpace);
   parser.parseValue(output);
-
   KJ_REQUIRE(parser.inputExhausted(), "Input remains after parsing JSON.");
 }
 
