@@ -205,6 +205,24 @@ ArrayBuilder<T> Arena::allocateOwnArrayBuilder(size_t capacity) {
       capacity, DestructorOnlyArrayDisposer::instance);
 }
 
+// =======================================================================================
+// Factory
+
+template <typename T>
+class ArenaArrayBuilderFactory final : public ArrayBuilderFactory<T> {
+  // TODO comment
+
+public:
+  ArenaArrayBuilderFactory(Arena& arena): arena(arena) {}
+
+  ArrayBuilder<T> arrayBuilder(size_t size) override {
+    return arena.allocateOwnArrayBuilder<T>(size);
+  };
+
+private:
+  Arena& arena;
+};
+
 }  // namespace kj
 
 KJ_END_HEADER

@@ -511,6 +511,32 @@ inline ArrayBuilder<T> heapArrayBuilder(size_t size) {
 }
 
 // =======================================================================================
+// Factories
+
+template <typename T>
+class ArrayBuilderFactory {
+  // TODO comment
+
+public:
+  virtual ArrayBuilder<T> arrayBuilder(size_t size) = 0;
+};
+
+template <typename T>
+class HeapArrayBuilderFactory final : public ArrayBuilderFactory<T> {
+  // TODO comment
+
+public:
+  static HeapArrayBuilderFactory<T> instance;
+
+  ArrayBuilder<T> arrayBuilder(size_t size) override {
+    return heapArrayBuilder<T>(size);
+  };
+};
+
+template <typename T>
+HeapArrayBuilderFactory<T> HeapArrayBuilderFactory<T>::instance;
+
+// =======================================================================================
 // Inline Arrays
 
 template <typename T, size_t fixedSize>

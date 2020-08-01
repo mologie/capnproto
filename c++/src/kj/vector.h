@@ -35,11 +35,11 @@ class Vector {
   // move constructor throws, the Vector is left in an inconsistent state.  This is acceptable
   // under KJ exception theory which assumes that exceptions leave things in inconsistent states.
 
-  // TODO(someday): Allow specifying a custom allocator.
-
 public:
   inline Vector() = default;
-  inline explicit Vector(size_t capacity): builder(heapArrayBuilder<T>(capacity)) {}
+  inline explicit Vector(size_t capacity): builder(factory.arrayBuilder(capacity)) {}
+  inline explicit Vector(size_t capacity, ArrayBuilderFactory<T>& factory):
+    factory(factory), builder(factory.arrayBuilder(capacity)) {}
   inline Vector(Array<T>&& array): builder(kj::mv(array)) {}
 
   inline operator ArrayPtr<T>() { return builder; }
@@ -128,6 +128,7 @@ public:
   }
 
 private:
+  ArrayBuilderFactory<T>& factory = HeapArrayBuilderFactory<T>::instance;
   ArrayBuilder<T> builder;
 
   void grow(size_t minCapacity = 0) {
@@ -137,7 +138,7 @@ private:
     if (builder.size() > newSize) {
       builder.truncate(newSize);
     }
-    ArrayBuilder<T> newBuilder = heapArrayBuilder<T>(newSize);
+    ArrayBuilder<T> newBuilder = factory.arrayBuilder(newSize);
     newBuilder.addAll(kj::mv(builder));
     builder = kj::mv(newBuilder);
   }
