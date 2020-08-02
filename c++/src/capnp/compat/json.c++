@@ -628,7 +628,7 @@ class Parser {
 public:
   Parser(size_t maxNestingDepth, kj::ArrayPtr<const char> input, kj::ArrayPtr<byte> scratchSpace) :
     maxNestingDepth(maxNestingDepth), input(input), nestingDepth(0), arena(scratchSpace),
-    decodedFactory(arena), decoded(256, decodedFactory) {}
+    decodedFactory(arena), decoded(256, &decodedFactory) {}
 
   void parseValue(JsonValue::Builder& output) {
     input.consumeWhitespace();
@@ -663,7 +663,7 @@ public:
     // that a JsonValue is used for interop, and won't be sent or written as a
     // Cap'n Proto message.  This also applies to parseObject below.
     kj::ArenaArrayBuilderFactory<Orphan<JsonValue>> vectorFactory(arena);
-    kj::Vector<Orphan<JsonValue>> values(32, vectorFactory);
+    kj::Vector<Orphan<JsonValue>> values(32, &vectorFactory);
     auto orphanage = Orphanage::getForMessageContaining(output);
     bool expectComma = false;
 
@@ -699,7 +699,7 @@ public:
 
   void parseObject(JsonValue::Builder& output) {
     kj::ArenaArrayBuilderFactory<Orphan<JsonValue::Field>> vectorFactory(arena);
-    kj::Vector<Orphan<JsonValue::Field>> fields(32, vectorFactory);
+    kj::Vector<Orphan<JsonValue::Field>> fields(32, &vectorFactory);
     auto orphanage = Orphanage::getForMessageContaining(output);
     bool expectComma = false;
 
